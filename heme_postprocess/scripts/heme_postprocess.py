@@ -35,10 +35,12 @@ import wx
 import wx.richtext 
 
 PROGRAM=os.path.basename(sys.argv[0])
-VERSION="0.1"
-BUILD="180423"
+VERSION="0.2"
+BUILD="180424"
 PROGVERSION = "{} v{}".format(PROGRAM, VERSION)
 
+# v0.2 180424 - Move added program info in variant report spreadsheet to 
+#               second worksheet
 # v0.1 180423 - adapt stamp_postprocess to ignore 
 #               <samplename>.nobarcode.{vcf,variant_report.txt} files
 #               and add program name and date to output files
@@ -136,28 +138,32 @@ def print_spreadsheet_excel(header, data, outfile, sheetname=None, hide=[]):
     if sheetname and len(sheetname)>30:
         sheetname = sheetname[:30]
     workbook = xlsxwriter.Workbook(outfile)
-    worksheet = workbook.add_worksheet(sheetname)
+    sheets = [(sheetname, data)]
+    if header:
+        sheets.append(('info', header))
     wbformat = add_formats_to_workbook(workbook)
-    numlines = 0
-    for i, rowdat in enumerate(header+data):
-        fmt = wbformat[rowdat.highlight] if rowdat.highlight else None
-        numlines += 1
-        for j, r in enumerate(rowdat.data):
-            if r.isdigit():
-                r = int(r)
-            elif is_float(r):
-                r = float(r)
-            if not rowdat.cell or j==rowdat.cell:
-                worksheet.write(i, j, r, fmt)
-            else:
-                worksheet.write(i, j, r)
-        if i in hide: # hide row
-            worksheet.set_row(i, None, None, {'hidden': True})
+    numlines = defaultdict(int)
+    for wsname, rows in sheets:
+        worksheet = workbook.add_worksheet(wsname)
+        for i, rowdat in enumerate(rows):
+            fmt = wbformat[rowdat.highlight] if rowdat.highlight else None
+            numlines[wsname] += 1
+            for j, r in enumerate(rowdat.data):
+                if r.isdigit():
+                    r = int(r)
+                elif is_float(r):
+                    r = float(r)
+                if not rowdat.cell or j==rowdat.cell:
+                    worksheet.write(i, j, r, fmt)
+                else:
+                    worksheet.write(i, j, r)
+            if i in hide: # hide row
+                worksheet.set_row(i, None, None, {'hidden': True})
 #    worksheet.freeze_panes(len(header), 0)
     workbook.close()
     wb = openpyxl.load_workbook(outfile)
     wb.save(outfile)
-    return numlines
+    return numlines[sheetname]
 
 
 #----fileops.py---------------------------------------------------------------
@@ -210,10 +216,10 @@ def create_depth_report_xlsx(report, args):
     if tabdata.header:
         tabdata.header[0] +=', '+PROGVERSION
     else:
-        tabdata.header.append('#'+PROGVERSION)
-        tabdata.header.append('#filedate='+datetime_string())
-    header = [ ExcelRowData([l,]) for l in tabdata.header ]
-    header.append(ExcelRowData(tabdata.fields, 'bold'))
+        header.append(ExcelRowData(['#'+PROGVERSION]))
+        header.append(ExcelRowData(['#filedate='+datetime_string()]))
+    headerdata = [ ExcelRowData([l,]) for l in tabdata.header ]
+    headerdata.append(ExcelRowData(tabdata.fields, 'bold'))
     i_mindepth = None
     if 'Min Depth' in tabdata.fields:
         i_mindepth = tabdata.fields.index('Min Depth')
@@ -224,7 +230,7 @@ def create_depth_report_xlsx(report, args):
                  "Min Depth column not found.")
     for row in tabdata.data: # create dict keyed by min depth
         data[int(row[i_mindepth])].append(row)
-    rows = []
+    rows = headerdata
     for mindepth, row in sorted(data.items()):
         hi = 'yellow' if mindepth < MINCOVERAGE else None
         for r in row:
@@ -365,18 +371,20 @@ def create_variant_report_xlsx(report, args):
     fields = None
     highlight_row = ExcelRowData(['']*36, 'gold')
     tabdata = parse_tab_file(report, outfile=outfile)
-    addrows = []
+    header = []
     if tabdata.header:
         tabdata.header[0] +=', '+PROGVERSION
     else:
-        tabdata.header.append('#'+PROGVERSION)
-        addrows.append(len(tabdata.header)-1)
-        tabdata.header.append('#filedate='+datetime_string())
-        addrows.append(len(tabdata.header)-1)
+        header.append(ExcelRowData(['#'+PROGVERSION]))
+        header.append(ExcelRowData(['#filedate='+datetime_string()]))
+    headerdata = [ ExcelRowData([l,]) for l in tabdata.header ]
+    headerdata.append(ExcelRowData(tabdata.fields, 'bold'))
+
+#    header = [ ExcelRowData([l,]) for l in tabdata.header ]
+#    header.append(ExcelRowData(tabdata.fields, 'bold'))
     tabdata = add_comment_snippet(tabdata)
-    header = [ ExcelRowData([l,]) for l in tabdata.header ]
-    header.append(ExcelRowData(tabdata.fields, 'bold'))
-    data = []
+#    data = []
+    data = headerdata
     i_status = None
     if 'Status' in tabdata.fields:
         i_status = tabdata.fields.index('Status')
@@ -393,13 +401,12 @@ def create_variant_report_xlsx(report, args):
             data.append(ExcelRowData(row))#, 'green', i_status))
         else:
             data.append(ExcelRowData(row))
-    numxlines = print_spreadsheet_excel(header, data, outfile, sheetname,
-                hide=addrows)
+    numxlines = print_spreadsheet_excel(header, data, outfile, sheetname)
     if highlight_row:
         num_expect = tabdata.numlines
         sys.stderr.write("    No NOT_REPORTED variants\n")
     else:
-        num_expect = tabdata.numlines+1+len(addrows)
+        num_expect = tabdata.numlines+1
     if num_expect != numxlines:
         sys.stderr.write("    {} lines in report\n".format(tabdata.numlines))
         sys.stderr.write("    {} lines in spreadsheet\n".format(numxlines))
